@@ -88,10 +88,10 @@ async function generateMessage(type) {
 
   try {
     var res = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY,
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY,
       {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 1500, temperature: 0.8 }
+        generationConfig: { maxOutputTokens: 400, temperature: 0.8 }
       },
       { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
     );
@@ -239,7 +239,7 @@ cron.schedule('0 18 * * *', async function() {
 }, { timezone: 'Asia/Jerusalem' });
 
 // ── 22:00 — הודעת לילה ──
-cron.schedule('15 23 * * *', async function() {
+cron.schedule('25 23 * * *', async function() {
   console.log('⏰ 22:00');
   var msg = await generateMessage(isWeekend() ? 'weekend' : 'lateEvening');
   await sendText(msg);
