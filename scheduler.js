@@ -252,7 +252,7 @@ cron.schedule('0 12 * * *', async () => {
   console.log('⏰ 12:00'); await sendWithDelay(async () => { const type = isMoatzash() ? 'motzash' : isWeekend() ? 'weekend' : 'noon'; const msg = await generateMessage(type); await sendText(msg); });
 }, { timezone: 'Asia/Jerusalem' });
 
-cron.schedule('24 14 * * *', async () => {
+cron.schedule('33 14 * * *', async () => {
   console.log('⏰ 15:00'); await sendWithDelay(async () => { const msg = await generateMessage(isWeekend() ? 'weekend' : 'afternoon'); await sendText(msg); });
 }, { timezone: 'Asia/Jerusalem' });
 
