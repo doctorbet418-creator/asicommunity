@@ -13,13 +13,11 @@ const LOVABLE_URL = process.env.LOVABLE_URL || 'https://id-preview--82197b76-973
 const BOT_SECRET = process.env.BOT_WEBHOOK_SECRET || '';
 const TEMPLATE_HISTORY_FILE = './template_history.json';
 
-// ── טעינת פרומפטים ──
 function loadPrompts() {
   try { if (fs.existsSync(PROMPTS_FILE)) return JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8')); } catch(e) {}
   return {};
 }
 
-// ── היסטוריית תבניות ──
 function loadTemplateHistory() {
   try { if (fs.existsSync(TEMPLATE_HISTORY_FILE)) return JSON.parse(fs.readFileSync(TEMPLATE_HISTORY_FILE, 'utf8')); } catch(e) {}
   return { lastVariant: -1, lastQuestionCount: 0, lastTwoRaffles: false };
@@ -29,9 +27,8 @@ function saveTemplateHistory(data) {
   fs.writeFileSync(TEMPLATE_HISTORY_FILE, JSON.stringify(data, null, 2));
 }
 
-// ── בחר תבנית ברוטציה ──
 function chooseTemplate(history) {
-  const rotations = [
+  var rotations = [
     { variant: 0, questionCount: 1 },
     { variant: 1, questionCount: 2 },
     { variant: 0, questionCount: 1 },
@@ -39,8 +36,8 @@ function chooseTemplate(history) {
     { variant: 1, questionCount: 2 },
     { variant: 0, questionCount: 1 },
   ];
-  for (let i = 0; i < rotations.length; i++) {
-    const r = rotations[i];
+  for (var i = 0; i < rotations.length; i++) {
+    var r = rotations[i];
     if (r.variant !== history.lastVariant || r.questionCount !== history.lastQuestionCount) {
       return r;
     }
@@ -48,16 +45,79 @@ function chooseTemplate(history) {
   return { variant: 0, questionCount: 1 };
 }
 
-// ── האם לשלוח 2 הגרלות היום? (כ-30% מהימים) ──
 function shouldSendTwoRaffles(history) {
-  if (history.lastTwoRaffles) return false; // לא יומיים ברצף
-  return Math.random() < 0.3; // 30% סיכוי
+  if (history.lastTwoRaffles) return false;
+  return Math.random() < 0.3;
 }
 
-// ── שלוף הגרלות פתוחות מ-Lovable ──
+function isShabbat() {
+  var now = new Date();
+  var day = now.getDay();
+  var hour = now.getHours();
+  if (day === 5 && hour >= 17) return true;
+  if (day === 6 && hour < 20) return true;
+  return false;
+}
+
+function getTodayBonus() {
+  var day = new Date().getDay();
+  if (day === 1 || day === 3) return '30deposit';
+  if (day === 2 || day === 4) return '100casino';
+  if (day === 4 || day === 5) return 'weekend';
+  return 'none';
+}
+
+async function generateMessage(type) {
+  var config = loadPrompts();
+  var dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+  var dayName = dayNames[new Date().getDay()];
+  var bonus = getTodayBonus();
+  var br = config.bonusRules || {};
+
+  var bonusInstruction = 'אין בונוס מיוחד היום.';
+  if (bonus === '30deposit') bonusInstruction = 'היום יש ' + (br.monday_wednesday || '30% הפקדה לא מקוזז') + '. הזכר פעם אחת בלבד.';
+  if (bonus === '100casino') bonusInstruction = 'היום יש ' + (br.tuesday_thursday || '100% קזינו ו-50% ספורט') + '. הזכר פעם אחת בלבד.';
+  if (bonus === 'weekend') bonusInstruction = 'סופ"ש! שווק: ' + (br.weekend || '100% קזינו ו-50% ספורט') + ' 100₪ מתנה בהפקדה!';
+
+  var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'רובי') + ', סוכן הימורים. כתוב הודעה קצרה לקהילה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
+  var prompt = promptTemplate
+    .replace(/{agentName}/g, config.agentName || 'רובי')
+    .replace(/{agentPhone}/g, config.agentPhone || '547554270')
+    .replace(/{day}/g, dayName)
+    .replace(/{baseRules}/g, config.baseRules || '')
+    .replace(/{bonusInstruction}/g, bonusInstruction);
+
+  try {
+    var res = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      messages: [{ role: 'user', content: prompt }]
+    }, { headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' } });
+    return res.data.content[0].text;
+  } catch(err) {
+    console.error('❌ שגיאה ב-AI:', err.message);
+    return null;
+  }
+}
+
+async function sendWithDelay(fn, maxMinutes) {
+  var delay = randomDelay(maxMinutes || 10);
+  await new Promise(function(r) { setTimeout(r, delay); });
+  await fn();
+}
+
+async function sendText(text) {
+  if (isShabbat() && !isMoatzash()) { console.log('🕌 שבת'); return; }
+  if (!text) return;
+  try {
+    await axios.post(SERVER_URL + '/api/sendText', { chatId: GROUP_ID, content: text });
+    console.log('✅ נשלח:', text.substring(0, 40) + '...');
+  } catch(err) { console.error('❌ שגיאה:', err.message); }
+}
+
 async function getOpenRaffles() {
   try {
-    const res = await axios.get(LOVABLE_URL + '/api/public/bot/raffles?locked=false', {
+    var res = await axios.get(LOVABLE_URL + '/api/public/bot/raffles?locked=false', {
       headers: { 'X-Bot-Secret': BOT_SECRET }
     });
     return res.data || [];
@@ -67,238 +127,177 @@ async function getOpenRaffles() {
   }
 }
 
-// ── שנה תבנית ──
 async function setTemplate(raffleId, variant, questionCount) {
   try {
     await axios.post(LOVABLE_URL + '/api/public/bot/template', {
-      raffleId,
-      variant,
-      questionCount
+      raffleId: raffleId,
+      variant: variant,
+      questionCount: questionCount
     }, { headers: { 'X-Bot-Secret': BOT_SECRET, 'Content-Type': 'application/json' } });
-    console.log('✅ תבנית שונתה: variant=' + variant + ', questions=' + questionCount);
+    console.log('✅ תבנית: variant=' + variant + ', questions=' + questionCount);
     return true;
   } catch(err) {
-    console.error('❌ שגיאה בשינוי תבנית:', err.message);
+    console.error('❌ שגיאה בתבנית:', err.message);
     return false;
   }
 }
 
-// ── נעל הגרלה ──
 async function lockRaffle(raffleId) {
   try {
     await axios.post(LOVABLE_URL + '/api/public/bot/lock', {
-      raffleId
+      raffleId: raffleId
     }, { headers: { 'X-Bot-Secret': BOT_SECRET, 'Content-Type': 'application/json' } });
-    console.log('✅ הגרלה ננעלה: ' + raffleId);
+    console.log('✅ ננעלה: ' + raffleId);
     return true;
   } catch(err) {
-    console.error('❌ שגיאה בנעילת הגרלה:', err.message);
+    console.error('❌ שגיאה בנעילה:', err.message);
     return false;
   }
 }
 
-// ── נעל והשלח הגרלה אחת ──
-async function lockAndSendRaffle(raffles, history) {
-  if (!raffles.length) { console.log('אין הגרלות פתוחות'); return false; }
-  const raffle = raffles[Math.floor(Math.random() * raffles.length)];
-  console.log('🎯 נבחרה: ' + (raffle.match_title || raffle.id));
-  const template = chooseTemplate(history);
-  await setTemplate(raffle.id, template.variant, template.questionCount);
-  const locked = await lockRaffle(raffle.id);
-  if (locked) {
-    saveTemplateHistory({
-      lastVariant: template.variant,
-      lastQuestionCount: template.questionCount,
-      lastTwoRaffles: false
-    });
-  }
-  return locked;
-}
-
-// ── שלח הודעת טקסט ──
-async function sendText(text) {
-  if (isShabbat() && !isMoatzash()) { console.log('🕌 שבת'); return; }
-  if (!text) return;
-  try {
-    await axios.post(SERVER_URL + '/api/sendText', { chatId: GROUP_ID, content: text });
-    console.log('✅ נשלח:', text.substring(0, 40) + '...');
-  } catch (err) { console.error('❌ שגיאה:', err.message); }
-}
-
-// ── שלח תוצאות ──
-async function sendResults(raffle) {
-  try {
-    if (raffle.results_image_url) {
-      await axios.post(SERVER_URL + '/api/sendImage', { chatId: GROUP_ID, url: raffle.results_image_url, caption: raffle.results || '' });
-    } else {
-      await axios.post(SERVER_URL + '/api/sendText', { chatId: GROUP_ID, content: raffle.results || '' });
-    }
-    console.log('✅ תוצאות נשלחו');
-  } catch (err) { console.error('❌ שגיאה:', err.message); }
-}
-
-// ── האם עכשיו שבת? ──
-function isShabbat() {
-  const now = new Date();
-  const day = now.getDay();
-  const hour = now.getHours();
-  if (day === 5 && hour >= 17) return true;
-  if (day === 6 && hour < 20) return true;
-  return false;
-}
-
-// ── בונוס לפי יום ──
-function getTodayBonus() {
-  const day = new Date().getDay();
-  if (day === 1 || day === 3) return '30deposit';
-  if (day === 2 || day === 4) return '100casino';
-  if (day === 4 || day === 5) return 'weekend';
-  return 'none';
-}
-
-// ── יצירת הודעה עם AI ──
-async function generateMessage(type) {
-  const config = loadPrompts();
-  const dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
-  const dayName = dayNames[new Date().getDay()];
-  const bonus = getTodayBonus();
-  const br = config.bonusRules || {};
-
-  let bonusInstruction = 'אין בונוס מיוחד היום, שמור על טבעי.';
-  if (bonus === '30deposit') bonusInstruction = 'היום יש ' + (br.monday_wednesday || '30% הפקדה לא מקוזז') + '. הזכר פעם אחת בלבד בערב.';
-  if (bonus === '100casino') bonusInstruction = 'היום יש ' + (br.tuesday_thursday || '100% קזינו ו-50% ספורט') + '. הזכר פעם אחת בלבד בערב.';
-  if (bonus === 'weekend') bonusInstruction = 'סופ"ש! שווק חזק: ' + (br.weekend || '100% קזינו ו-50% ספורט') + ' 100₪ מתנה בהפקדה!';
-
-  const promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'רובי') + ', סוכן הימורים. כתוב הודעה קצרה לקהילה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
-  const prompt = promptTemplate
-    .replace(/{agentName}/g, config.agentName || 'רובי')
-    .replace(/{agentPhone}/g, config.agentPhone || '547554270')
-    .replace(/{day}/g, dayName)
-    .replace(/{baseRules}/g, config.baseRules || '')
-    .replace(/{bonusInstruction}/g, bonusInstruction);
-
-  try {
-    const res = await axios.post('https://api.anthropic.com/v1/messages', {
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 400,
-      messages: [{ role: 'user', content: prompt }]
-    }, { headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' } });
-    return res.data.content[0].text;
-  } catch (err) {
-    console.error('❌ שגיאה ב-AI:', err.message);
-    return null;
-  }
-}
-
-async function sendWithDelay(fn, maxMinutes) {
-  const delay = randomDelay(maxMinutes || 10);
-  await new Promise(r => setTimeout(r, delay));
-  await fn();
-}
-
-// ── שלוף תוצאות אתמול ──
 async function getYesterdayResults() {
-  const yesterday = new Date();
+  var yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const dateStr = yesterday.toISOString().split('T')[0];
-  const res = await axios.get(SUPABASE_URL + '/rest/v1/raffles?raffle_date=eq.' + dateStr + '&results=not.is.null&is_finished=eq.true', { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } });
+  var dateStr = yesterday.toISOString().split('T')[0];
+  var res = await axios.get(SUPABASE_URL + '/rest/v1/raffles?raffle_date=eq.' + dateStr + '&results=not.is.null&is_finished=eq.true', { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } });
   return res.data;
 }
 
-// ══════════════════════════════════════
-// ── לוח הזמנים ──
-// ══════════════════════════════════════
-
-// 09:00 — תוצאות אתמול
-cron.schedule('0 9 * * *', async () => {
+// ── 09:00 — תוצאות אתמול ──
+cron.schedule('0 9 * * *', async function() {
   console.log('⏰ 09:00');
-  const results = await getYesterdayResults();
-  for (const r of results) { await sendResults(r); await new Promise(res => setTimeout(res, 3000)); }
+  try {
+    var results = await getYesterdayResults();
+    for (var i = 0; i < results.length; i++) {
+      var r = results[i];
+      if (r.results) {
+        await axios.post(SERVER_URL + '/api/sendText', { chatId: GROUP_ID, content: r.results });
+      }
+      await new Promise(function(res) { setTimeout(res, 3000); });
+    }
+  } catch(e) { console.error('שגיאה:', e.message); }
 }, { timezone: 'Asia/Jerusalem' });
 
-// 10:00 — הודעת בוקר
-cron.schedule('0 10 * * *', async () => {
+// ── 10:00 — הודעת בוקר ──
+cron.schedule('0 10 * * *', async function() {
   console.log('⏰ 10:00');
-  await sendWithDelay(async () => { const msg = await generateMessage(isWeekend() ? 'weekend' : 'morning'); await sendText(msg); });
-}, { timezone: 'Asia/Jerusalem' });
-
-// 12:00 — הודעת צהריים
-cron.schedule('0 12 * * *', async () => {
-  console.log('⏰ 12:00');
-  await sendWithDelay(async () => {
-    const type = isMoatzash() ? 'motzash' : isWeekend() ? 'weekend' : 'noon';
-    const msg = await generateMessage(type);
+  await sendWithDelay(async function() {
+    var msg = await generateMessage(isWeekend() ? 'weekend' : 'morning');
     await sendText(msg);
   });
 }, { timezone: 'Asia/Jerusalem' });
 
-// 14:30 — נעל הגרלות (webhook יאחסן בתור ממתינות)
-cron.schedule('30 14 * * *', async () => {
-  console.log('⏰ 14:30 — נועל הגרלות ליום...');
+// ── 12:00 — הודעת צהריים ──
+cron.schedule('0 12 * * *', async function() {
+  console.log('⏰ 12:00');
+  await sendWithDelay(async function() {
+    var type = isMoatzash() ? 'motzash' : isWeekend() ? 'weekend' : 'noon';
+    var msg = await generateMessage(type);
+    await sendText(msg);
+  });
+}, { timezone: 'Asia/Jerusalem' });
+
+// ── 14:30 — נעל הגרלות (webhook ישמור בתור ממתינות) ──
+cron.schedule('30 14 * * *', async function() {
+  console.log('⏰ 14:30 — נועל הגרלות...');
   if (isShabbat() || isMoatzash()) { console.log('שבת/מוצ"ש — לא נועל'); return; }
-  const history = loadTemplateHistory();
-  const raffles = await getOpenRaffles();
-  if (!raffles.length) { console.log('אין הגרלות פתוחות'); return; }
-  const twoRaffles = shouldSendTwoRaffles(history);
-  console.log('📋 היום ' + (twoRaffles ? '2 הגרלות' : 'הגרלה אחת'));
-  if (twoRaffles && raffles.length >= 2) {
-    const football = raffles.find(function(r) { return r.sport === 'football'; }) || raffles[0];
-    const basketball = raffles.find(function(r) { return r.sport === 'basketball' && r.id !== football.id; }) || raffles[1];
-    const t1 = chooseTemplate(history);
-    await setTemplate(football.id, t1.variant, t1.questionCount);
-    await lockRaffle(football.id);
-    const t2 = chooseTemplate({ lastVariant: t1.variant, lastQuestionCount: t1.questionCount });
-    await setTemplate(basketball.id, t2.variant, t2.questionCount);
-    await lockRaffle(basketball.id);
-    saveTemplateHistory({ lastVariant: t2.variant, lastQuestionCount: t2.questionCount, lastTwoRaffles: true });
-  } else {
-    await lockAndSendRaffle(raffles, history);
-    saveTemplateHistory({ ...loadTemplateHistory(), lastTwoRaffles: false });
-  }
+  try {
+    var history = loadTemplateHistory();
+    var raffles = await getOpenRaffles();
+    if (!raffles.length) { console.log('אין הגרלות פתוחות'); return; }
+
+    var twoRaffles = shouldSendTwoRaffles(history);
+    console.log('📋 היום ' + (twoRaffles ? '2 הגרלות' : 'הגרלה אחת'));
+
+    if (twoRaffles && raffles.length >= 2) {
+      var football = null;
+      var basketball = null;
+      for (var i = 0; i < raffles.length; i++) {
+        if (raffles[i].sport === 'football' && !football) football = raffles[i];
+        else if (raffles[i].sport === 'basketball' && !basketball) basketball = raffles[i];
+      }
+      if (!football) football = raffles[0];
+      if (!basketball) basketball = raffles[1];
+
+      var t1 = chooseTemplate(history);
+      await setTemplate(football.id, t1.variant, t1.questionCount);
+      await lockRaffle(football.id);
+
+      var t2 = chooseTemplate({ lastVariant: t1.variant, lastQuestionCount: t1.questionCount, lastTwoRaffles: false });
+      await setTemplate(basketball.id, t2.variant, t2.questionCount);
+      await lockRaffle(basketball.id);
+
+      saveTemplateHistory({ lastVariant: t2.variant, lastQuestionCount: t2.questionCount, lastTwoRaffles: true });
+    } else {
+      var raffle = raffles[Math.floor(Math.random() * raffles.length)];
+      var t = chooseTemplate(history);
+      await setTemplate(raffle.id, t.variant, t.questionCount);
+      await lockRaffle(raffle.id);
+      saveTemplateHistory({ lastVariant: t.variant, lastQuestionCount: t.questionCount, lastTwoRaffles: false });
+    }
+  } catch(e) { console.error('❌ שגיאה בנעילה:', e.message); }
 }, { timezone: 'Asia/Jerusalem' });
 
-// 15:00 — הודעת אחר הצהריים
-cron.schedule('0 15 * * *', async () => {
+// ── 15:00 — הודעת אחה"צ ──
+cron.schedule('0 15 * * *', async function() {
   console.log('⏰ 15:00');
-  await sendWithDelay(async () => { const msg = await generateMessage(isWeekend() ? 'weekend' : 'afternoon'); await sendText(msg); });
+  await sendWithDelay(async function() {
+    var msg = await generateMessage(isWeekend() ? 'weekend' : 'afternoon');
+    await sendText(msg);
+  });
 }, { timezone: 'Asia/Jerusalem' });
 
-// 18:00 — הודעת ערב
-
+// ── 18:00 — שלח הגרלות ממתינות + הודעת ערב ──
+cron.schedule('0 18 * * *', async function() {
   console.log('⏰ 18:00');
-  await sendWithDelay(async () => { const msg = await generateMessage(isWeekend() ? 'weekend' : 'evening'); await sendText(msg); });
+  if (!isShabbat()) {
+    try {
+      var serverModule = require('./server');
+      if (serverModule.sendAllPendingRaffles) {
+        await serverModule.sendAllPendingRaffles();
+      }
+    } catch(e) { console.error('שגיאה בשליחת הגרלות:', e.message); }
+  }
+  await sendWithDelay(async function() {
+    var msg = await generateMessage(isWeekend() ? 'weekend' : 'evening');
+    await sendText(msg);
+  });
 }, { timezone: 'Asia/Jerusalem' });
 
-
-
-// 22:00 — הודעת לילה
-cron.schedule('0 22 * * *', async () => {
+// ── 22:00 — הודעת לילה ──
+cron.schedule('49 21 * * *', async function() {
   console.log('⏰ 22:00');
-  await sendWithDelay(async () => { const msg = await generateMessage(isWeekend() ? 'weekend' : 'lateEvening'); await sendText(msg); });
+  await sendWithDelay(async function() {
+    var msg = await generateMessage(isWeekend() ? 'weekend' : 'lateEvening');
+    await sendText(msg);
+  });
 }, { timezone: 'Asia/Jerusalem' });
 
-// 00:00 — הודעת חצות
-cron.schedule('0 0 * * *', async () => {
+// ── 00:00 — הודעת חצות ──
+cron.schedule('0 0 * * *', async function() {
   console.log('⏰ 00:00');
-  await sendWithDelay(async () => { const msg = await generateMessage('midnight'); await sendText(msg); });
+  await sendWithDelay(async function() {
+    var msg = await generateMessage('midnight');
+    await sendText(msg);
+  });
 }, { timezone: 'Asia/Jerusalem' });
 
-// 01:00 — לילה מאוחר
-cron.schedule('0 1 * * *', async () => {
+// ── 01:00 — לילה מאוחר ──
+cron.schedule('0 1 * * *', async function() {
   console.log('⏰ 01:00');
-  await sendWithDelay(async () => { const msg = await generateMessage('lateNight'); await sendText(msg); });
+  await sendWithDelay(async function() {
+    var msg = await generateMessage('lateNight');
+    await sendText(msg);
+  });
 }, { timezone: 'Asia/Jerusalem' });
 
-// 02:00 — שעתיים לפנות בוקר
-cron.schedule('0 2 * * *', async () => {
+// ── 02:00 — שעתיים לפנות בוקר ──
+cron.schedule('0 2 * * *', async function() {
   console.log('⏰ 02:00');
-  await sendWithDelay(async () => { const msg = await generateMessage('veryLateNight'); await sendText(msg); });
+  await sendWithDelay(async function() {
+    var msg = await generateMessage('veryLateNight');
+    await sendText(msg);
+  });
 }, { timezone: 'Asia/Jerusalem' });
-
-// פונקציה שנדרשת מ-server.js
-function shouldSendTwoRaffles(history) {
-  if (history.lastTwoRaffles) return false;
-  return Math.random() < 0.3;
-}
 
 console.log('📅 תזמון אוטומטי פעיל — שעון ישראל');
