@@ -15,6 +15,9 @@ const WEBHOOK_SECRET = process.env.BOT_WEBHOOK_SECRET || '';
 const raffleMessages = {};
 const PROMPTS_FILE = './prompts.json';
 
+// ── שמירת הגרלות שננעלו וממתינות לשליחה ──
+const pendingRaffles = []; // [{raffle, text, imageUrl, lockedAt}]
+
 function loadPrompts() {
   try { if (fs.existsSync(PROMPTS_FILE)) return JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8')); } catch(e) {}
   return {};
@@ -53,13 +56,73 @@ async function generateMessage(type, config) {
   return res.data.content[0].text;
 }
 
+// ── שלח הגרלה ממתינה לקהילה ──
+async function sendPendingRaffle(pending) {
+  const GROUP_ID = process.env.GROUP_ID;
+  const { raffle, text, imageUrl } = pending;
+  try {
+    let messageId = null;
+    if (imageUrl) {
+      const sent = await axios.post(WHAPI_URL + '/messages/image', {
+        to: GROUP_ID, media: imageUrl, caption: text || ''
+      }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
+      messageId = sent.data && sent.data.id;
+    } else {
+      const sent = await axios.post(WHAPI_URL + '/messages/text', {
+        to: GROUP_ID, body: text || ''
+      }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
+      messageId = sent.data && sent.data.id;
+    }
+    if (raffle && raffle.id && messageId) {
+      raffleMessages[raffle.id] = messageId;
+      console.log('💾 messageId נשמר: ' + raffle.id);
+    }
+    console.log('✅ הגרלה נשלחה לקהילה: ' + (raffle && raffle.match_title));
+    return true;
+  } catch(err) {
+    console.error('❌ שגיאה בשליחת הגרלה:', err.message);
+    return false;
+  }
+}
+
+// ── שלח כל ההגרלות הממתינות ──
+async function sendAllPendingRaffles() {
+  if (!pendingRaffles.length) {
+    console.log('אין הגרלות ממתינות לשליחה');
+    return;
+  }
+  console.log('📤 שולח ' + pendingRaffles.length + ' הגרלות ממתינות...');
+  while (pendingRaffles.length > 0) {
+    const pending = pendingRaffles.shift();
+    await sendPendingRaffle(pending);
+    // המתן 3 דקות בין הגרלות אם יש יותר מאחת
+    if (pendingRaffles.length > 0) {
+      await new Promise(function(r) { setTimeout(r, 3 * 60 * 1000); });
+    }
+  }
+  // שלח הודעת עידוד אחרי ההגרלות
+  setTimeout(async function() {
+    try {
+      const config = loadPrompts();
+      const msg = await generateMessage('afterRaffle', config);
+      if (msg) {
+        await axios.post(WHAPI_URL + '/messages/text', {
+          to: process.env.GROUP_ID, body: msg
+        }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
+      }
+    } catch(e) {}
+  }, 2 * 60 * 1000);
+}
+
 app.get('/', (req, res) => res.redirect('/admin'));
 app.get('/admin', (req, res) => { try { res.sendFile(__dirname + '/panel.html'); } catch(e) { res.send('Panel not found'); } });
 app.get('/qr', (req, res) => res.send('<html dir="rtl"><head><meta charset="utf-8"><title>BetON</title><style>body{background:#07070F;color:#f0f0f5;font-family:sans-serif;text-align:center;padding:3rem}h1{color:#F5C842}.ok{background:#0f2a1a;border:2px solid #22c55e;border-radius:12px;padding:2rem;display:inline-block;color:#22c55e;font-size:1.3rem;margin-top:1rem}</style></head><body><h1>BetON Bot</h1><div class="ok">Whapi מחובר!</div></body></html>'));
 
 app.get('/api/status', async (req, res) => {
-  try { const r = await axios.get(WHAPI_URL + '/health', { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN } }); res.json({ ready: true, status: r.data }); }
-  catch(err) { res.json({ ready: false }); }
+  try {
+    const r = await axios.get(WHAPI_URL + '/health', { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN } });
+    res.json({ ready: true, status: r.data, pendingRaffles: pendingRaffles.length });
+  } catch(err) { res.json({ ready: false }); }
 });
 
 app.get('/api/prompts', (req, res) => res.json(loadPrompts()));
@@ -125,6 +188,16 @@ app.get('/api/getGroups', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── API לשליחה ידנית של הגרלות ממתינות ──
+app.post('/api/sendPendingNow', async (req, res) => {
+  res.json({ success: true, count: pendingRaffles.length });
+  await sendAllPendingRaffles();
+});
+
+app.get('/api/pendingRaffles', (req, res) => {
+  res.json({ count: pendingRaffles.length, raffles: pendingRaffles.map(function(p) { return { id: p.raffle && p.raffle.id, title: p.raffle && p.raffle.match_title, sport: p.raffle && p.raffle.sport, lockedAt: p.lockedAt }; }) });
+});
+
 app.post('/api/generateTest', async (req, res) => {
   const { type } = req.body;
   if (!type) return res.status(400).json({ error: 'חסר type' });
@@ -143,17 +216,15 @@ app.post('/api/runFullTest', async (req, res) => {
   const labels = ['☀️ בוקר', '🌤 צהריים', '⛅ אחה"צ', '🌆 ערב', '🌙 לילה', '🕛 חצות', '🎉 סופ"ש', '🎯 אחרי הגרלה'];
   const delay = (delaySeconds || 30) * 1000;
   const config = loadPrompts();
-  for (let i = 0; i < types.length; i++) {
+  for (var i = 0; i < types.length; i++) {
     try {
       await new Promise(function(r) { setTimeout(r, i === 0 ? 1000 : delay); });
       const msg = await generateMessage(types[i], config);
       if (!msg) continue;
-      const header = '🧪 טסט: ' + labels[i] + '\n\n';
-      await axios.post(WHAPI_URL + '/messages/text', { to: chatId, body: header + msg }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
+      await axios.post(WHAPI_URL + '/messages/text', { to: chatId, body: '🧪 טסט: ' + labels[i] + '\n\n' + msg }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
       console.log('✅ טסט נשלח: ' + types[i]);
-    } catch(err) { console.error('❌ שגיאה בטסט ' + types[i] + ':', err.message); }
+    } catch(err) { console.error('❌ שגיאה בטסט:', err.message); }
   }
-  console.log('✅ טסט הושלם!');
 });
 
 // ── Webhook מ-Lovable ──
@@ -170,40 +241,26 @@ app.post('/webhook/lovable', async (req, res) => {
   const imageUrl = req.body.imageUrl;
   const GROUP_ID = process.env.GROUP_ID;
 
-  console.log('📨 Webhook מ-Lovable: ' + event + ' | sport: ' + (raffle && raffle.sport));
+  console.log('📨 Webhook: ' + event + ' | ' + (raffle && raffle.match_title) + ' | sport: ' + (raffle && raffle.sport));
 
   try {
     if (event === 'raffle_locked') {
-      // שלח הגרלה לקהילה
-      let messageId = null;
-      if (imageUrl) {
-        const sent = await axios.post(WHAPI_URL + '/messages/image', {
-          to: GROUP_ID, media: imageUrl, caption: text || ''
-        }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
-        messageId = sent.data && sent.data.id;
-      } else {
-        const sent = await axios.post(WHAPI_URL + '/messages/text', {
-          to: GROUP_ID, body: text || ''
-        }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
-        messageId = sent.data && sent.data.id;
-      }
-      if (raffle && raffle.id && messageId) {
-        raffleMessages[raffle.id] = messageId;
-        console.log('💾 messageId נשמר להגרלה: ' + raffle.id);
-      }
-      console.log('✅ הגרלה נשלחה לקהילה: ' + (raffle && raffle.match_title));
+      // שמור בתור ממתינות — לא שולח עדיין!
+      pendingRaffles.push({
+        raffle: raffle,
+        text: text,
+        imageUrl: imageUrl,
+        lockedAt: new Date().toISOString()
+      });
+      console.log('📥 הגרלה נשמרה לשליחה ב-18:00. סה"כ ממתינות: ' + pendingRaffles.length);
     }
 
     if (event === 'raffle_results') {
-      // שלח תוצאות לקהילה
+      // שלח תוצאות מיד לקהילה
       if (imageUrl) {
-        await axios.post(WHAPI_URL + '/messages/image', {
-          to: GROUP_ID, media: imageUrl, caption: text || ''
-        }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
+        await axios.post(WHAPI_URL + '/messages/image', { to: GROUP_ID, media: imageUrl, caption: text || '' }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
       } else {
-        await axios.post(WHAPI_URL + '/messages/text', {
-          to: GROUP_ID, body: text || ''
-        }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
+        await axios.post(WHAPI_URL + '/messages/text', { to: GROUP_ID, body: text || '' }, { headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' } });
       }
       console.log('✅ תוצאות נשלחו לקהילה');
 
@@ -227,6 +284,9 @@ app.post('/webhook/lovable', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── Export לשימוש ב-scheduler ──
+module.exports = { sendAllPendingRaffles };
 
 app.listen(PORT, '0.0.0.0', function() {
   console.log('🚀 BetON Bot פועל על פורט ' + PORT);
