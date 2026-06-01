@@ -86,7 +86,7 @@ async function generateMessage(type) {
     var res = await axios.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=' + GEMINI_API_KEY,
       { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1024, temperature: 0.8 } },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
+      { headers: { 'Content-Type': 'application/json' }, timeout: 90000 }
     );
     return res.data.candidates[0].content.parts[0].text;
   } catch(err) {
