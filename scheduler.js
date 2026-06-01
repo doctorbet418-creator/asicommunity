@@ -78,9 +78,9 @@ async function generateMessage(type) {
   if (bonus === '100casino') bonusInstruction = 'היום יש ' + (br.tuesday_thursday || '100% קזינו ו-50% ספורט') + '. הזכר פעם אחת בלבד בערב.';
   if (bonus === 'weekend') bonusInstruction = 'סופ"ש! שווק: ' + (br.weekend || '100% קזינו ו-50% ספורט') + ' לא מקוזז!';
 
-  var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'רובי') + ', כותב הודעות שיווקיות לקהילת בידור. כתוב הודעה קצרה לקהילה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
+  var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'אסי') + ', כותב הודעות שיווקיות לקהילת בידור. כתוב הודעה קצרה לקהילה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
   var prompt = promptTemplate
-    .replace(/{agentName}/g, config.agentName || 'רובי')
+    .replace(/{agentName}/g, config.agentName || 'אסי')
     .replace(/{agentPhone}/g, config.agentPhone || '547554270')
     .replace(/{day}/g, dayName)
     .replace(/{baseRules}/g, config.baseRules || '')
