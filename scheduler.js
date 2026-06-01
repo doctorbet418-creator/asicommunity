@@ -9,7 +9,7 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const PROMPTS_FILE = './prompts.json';
-const LOVABLE_URL = process.env.LOVABLE_URL || 'https://id-preview--82197b76-973a-461d-86d9-6790e471f6b6.lovable.app';
+const LOVABLE_URL = process.env.LOVABLE_URL || 'https://betongameraffle.lovable.app';
 const BOT_SECRET = process.env.BOT_WEBHOOK_SECRET || '';
 const TEMPLATE_HISTORY_FILE = './template_history.json';
 
@@ -78,7 +78,7 @@ async function generateMessage(type) {
   var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'אסי') + ', כותב הודעות שיווקיות לקהילת שחקנים. כתוב הודעה קצרה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
   var prompt = promptTemplate
     .replace(/{agentName}/g, config.agentName || 'אסי')
-    .replace(/{agentPhone}/g, config.agentPhone || '547554270')
+    .replace(/{agentPhone}/g, config.agentPhone || '525151129')
     .replace(/{day}/g, dayName)
     .replace(/{baseRules}/g, config.baseRules || '')
     .replace(/{bonusInstruction}/g, bonusInstruction);
@@ -118,15 +118,13 @@ async function getOpenRaffles() {
 
 // ── שלוף הגרלות נעולות מ-Supabase ──
 async function getTodayLockedRaffles() {
-  var today = new Date().toISOString().split('T')[0];
   try {
-    var res = await axios.get(
-      SUPABASE_URL + '/rest/v1/raffles?raffle_date=eq.' + today + '&locked=eq.true&is_finished=eq.false&order=created_at.asc',
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } }
-    );
+    var res = await axios.get(LOVABLE_URL + '/api/public/bot/raffles?locked=true', {
+      headers: { 'X-Bot-Secret': BOT_SECRET }
+    });
     return res.data || [];
   } catch(err) {
-    console.error('❌ שגיאה בשליפת הגרלות מ-Supabase:', err.message);
+    console.error('❌ שגיאה בשליפת הגרלות נעולות:', err.message);
     return [];
   }
 }
@@ -152,14 +150,15 @@ async function lockRaffle(raffleId) {
 }
 
 async function getYesterdayResults() {
-  var yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  var dateStr = yesterday.toISOString().split('T')[0];
-  var res = await axios.get(
-    SUPABASE_URL + '/rest/v1/raffles?raffle_date=eq.' + dateStr + '&results=not.is.null&is_finished=eq.true',
-    { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } }
-  );
-  return res.data;
+  try {
+    var res = await axios.get(LOVABLE_URL + '/api/public/bot/results', {
+      headers: { 'X-Bot-Secret': BOT_SECRET }
+    });
+    return res.data || [];
+  } catch(err) {
+    console.error('❌ שגיאה בשליפת תוצאות:', err.message);
+    return [];
+  }
 }
 
 // ── שלח הגרלה לקהילה ──
@@ -216,40 +215,7 @@ cron.schedule('0 12 * * *', async function() {
   await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
-// ── 14:30 — נעל הגרלות ──
-cron.schedule('30 14 * * *', async function() {
-  console.log('⏰ 14:30 — נועל הגרלות...');
-  if (isShabbat() || isMoatzash()) { console.log('שבת/מוצ"ש — לא נועל'); return; }
-  try {
-    var history = loadTemplateHistory();
-    var raffles = await getOpenRaffles();
-    if (!raffles.length) { console.log('אין הגרלות פתוחות'); return; }
-    var twoRaffles = shouldSendTwoRaffles(history);
-    console.log('📋 היום ' + (twoRaffles ? '2 הגרלות' : 'הגרלה אחת'));
-    if (twoRaffles && raffles.length >= 2) {
-      var football = null, basketball = null;
-      for (var i = 0; i < raffles.length; i++) {
-        if (raffles[i].sport === 'football' && !football) football = raffles[i];
-        else if (raffles[i].sport === 'basketball' && !basketball) basketball = raffles[i];
-      }
-      if (!football) football = raffles[0];
-      if (!basketball) basketball = raffles[1];
-      var t1 = chooseTemplate(history);
-      await setTemplate(football.id, t1.variant, t1.questionCount);
-      await lockRaffle(football.id);
-      var t2 = chooseTemplate({ lastVariant: t1.variant, lastQuestionCount: t1.questionCount, lastTwoRaffles: false });
-      await setTemplate(basketball.id, t2.variant, t2.questionCount);
-      await lockRaffle(basketball.id);
-      saveTemplateHistory({ lastVariant: t2.variant, lastQuestionCount: t2.questionCount, lastTwoRaffles: true });
-    } else {
-      var raffle = raffles[Math.floor(Math.random() * raffles.length)];
-      var t = chooseTemplate(history);
-      await setTemplate(raffle.id, t.variant, t.questionCount);
-      await lockRaffle(raffle.id);
-      saveTemplateHistory({ lastVariant: t.variant, lastQuestionCount: t.questionCount, lastTwoRaffles: false });
-    }
-  } catch(e) { console.error('❌ שגיאה בנעילה:', e.message); }
-}, { timezone: 'Asia/Jerusalem' });
+
 
 // ── 15:00 — הודעת אחה"צ ──
 cron.schedule('0 15 * * *', async function() {
