@@ -84,7 +84,7 @@ async function generateMessage(type) {
     .replace(/{bonusInstruction}/g, bonusInstruction);
   try {
     var res = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + GEMINI_API_KEY,
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=' + GEMINI_API_KEY,
       { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1024, temperature: 0.8 } },
       { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
     );
