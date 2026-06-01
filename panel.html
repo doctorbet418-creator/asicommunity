@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>💎 CrownBet Admin</title>
+<title>💎 BetON Admin</title>
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -86,7 +86,7 @@ textarea{line-height:1.65;min-height:110px}
   <div class="brand">
     <div class="brand-gem">💎</div>
     <div>
-      <div class="brand-name">CrownBet Admin</div>
+      <div class="brand-name">BetON Admin</div>
       <div class="brand-sub">ניהול בוט</div>
     </div>
   </div>
@@ -358,19 +358,34 @@ async function loadRaffles() {
   var el = document.getElementById('rafflesList');
   el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:1rem">טוען...</div>';
   try {
-    var SB = 'https://oxraakhcpvthlvjvapay.supabase.co';
-    var SK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im94cmFha2hjcHZ0aGx2anZhcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwNzY4MTUsImV4cCI6MjA5MzY1MjgxNX0.dftK8Qb9zjzwEVGRLv4Q54Pqn2SLrzOxUqydIYf3Xd8';
-    var today = new Date().toISOString().split('T')[0];
-    var r = await fetch(SB + '/rest/v1/raffles?raffle_date=eq.' + today + '&locked=eq.true&order=created_at.asc', { headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK } });
+    var r = await fetch(SERVER + '/api/pendingRaffles');
     var data = await r.json();
-    if (!data.length) { el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:1.5rem">אין הגרלות נעולות להיום</div>'; return; }
-    el.innerHTML = data.map(function(r) {
-      return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">' +
-        '<div><div style="font-size:13px;font-weight:600">' + r.match_title + '</div>' +
-        '<div style="font-size:11px;color:var(--muted)">' + r.league + ' | ' + r.match_time + '</div></div>' +
+    if (!data.count) {
+      el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:1.5rem">אין הגרלות ממתינות לשליחה</div>';
+      return;
+    }
+    var sportEmoji = { football: '⚽', basketball: '🏀', tennis: '🎾' };
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">סה"כ ' + data.count + ' הגרלות ממתינות לשליחה ב-18:00</div>' +
+      data.raffles.map(function(r) {
+        var emoji = sportEmoji[r.sport] || '🎯';
+        var lockedTime = r.lockedAt ? new Date(r.lockedAt).toLocaleTimeString('he-IL', {hour:'2-digit',minute:'2-digit'}) : '';
+        return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">' +
+          '<div>' +
+            '<div style="font-size:13px;font-weight:600">' + emoji + ' ' + (r.title || r.id) + '</div>' +
+            '<div style="font-size:11px;color:var(--muted)">ננעל ב-' + lockedTime + '</div>' +
+          '</div>' +
+          '<button class="btn btn-ghost btn-sm" onclick="sendNow()">📤 שלח עכשיו</button>' +
         '</div>';
-    }).join('');
+      }).join('');
   } catch(e) { el.innerHTML = '<div style="color:var(--red);text-align:center;padding:1rem">שגיאה בטעינה</div>'; }
+}
+
+async function sendNow() {
+  try {
+    var r = await fetch(SERVER + '/api/sendPendingNow', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    if (r.ok) { showToast('✅ הגרלות נשלחות!'); setTimeout(loadRaffles, 3000); }
+    else showToast('❌ שגיאה', true);
+  } catch(e) { showToast('❌ שגיאת חיבור', true); }
 }
 
 async function sendManual() {
