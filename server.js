@@ -40,10 +40,10 @@ async function generateMessage(type, config) {
     motzash: 'מוצאי שבת חוזרים לאקשן',
     afterRaffle: 'הגרלה זה עתה נשלחה',
   };
-  const promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'רובי') + ', סוכן הימורים. כתוב הודעה קצרה לקהילה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
+  const promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'אסי') + ', סוכן הימורים. כתוב הודעה קצרה לקהילה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
   const bonusInstruction = bonusMap[type] || '';
   const prompt = promptTemplate
-    .replace(/{agentName}/g, config.agentName || 'רובי')
+    .replace(/{agentName}/g, config.agentName || 'אסי')
     .replace(/{agentPhone}/g, config.agentPhone || '547554270')
     .replace(/{day}/g, dayName)
     .replace(/{baseRules}/g, config.baseRules || '')
