@@ -4,8 +4,8 @@ const fs = require('fs');
 const { randomDelay, isWeekend, isMoatzash } = require('./messages');
 
 const GROUP_ID = process.env.GROUP_ID;
-const SUPABASE_URL = 'https://oxraakhcpvthlvjvapay.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im94cmFha2hjcHZ0aGx2anZhcGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwNzY4MTUsImV4cCI6MjA5MzY1MjgxNX0.dftK8Qb9zjzwEVGRLv4Q54Pqn2SLrzOxUqydIYf3Xd8';
+const SUPABASE_URL = 'https://hnkiqwgkmtpirykydkrb.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const PROMPTS_FILE = './prompts.json';
@@ -65,38 +65,30 @@ function getTodayBonus() {
   return 'none';
 }
 
-// ── יצירת הודעה עם Gemini ──
 async function generateMessage(type) {
   var config = loadPrompts();
   var dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
   var dayName = dayNames[new Date().getDay()];
   var bonus = getTodayBonus();
   var br = config.bonusRules || {};
-
   var bonusInstruction = 'אין בונוס מיוחד היום.';
   if (bonus === '30deposit') bonusInstruction = 'היום יש ' + (br.monday_wednesday || '30% הפקדה לא מקוזז') + '. הזכר פעם אחת בלבד בערב.';
   if (bonus === '100casino') bonusInstruction = 'היום יש ' + (br.tuesday_thursday || '100% קזינו ו-50% ספורט') + '. הזכר פעם אחת בלבד בערב.';
   if (bonus === 'weekend') bonusInstruction = 'סופ"ש! שווק: ' + (br.weekend || '100% קזינו ו-50% ספורט') + ' לא מקוזז!';
-
-  var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'אסי') + ', כותב הודעות שיווקיות לקהילת בידור. כתוב הודעה קצרה לקהילה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
+  var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'אסי') + ', כותב הודעות שיווקיות לקהילת שחקנים. כתוב הודעה קצרה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
   var prompt = promptTemplate
     .replace(/{agentName}/g, config.agentName || 'אסי')
     .replace(/{agentPhone}/g, config.agentPhone || '547554270')
     .replace(/{day}/g, dayName)
     .replace(/{baseRules}/g, config.baseRules || '')
     .replace(/{bonusInstruction}/g, bonusInstruction);
-
   try {
     var res = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 10000, temperature: 0.8 }
-      },
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + GEMINI_API_KEY,
+      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1024, temperature: 0.8 } },
       { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
     );
-    var text = res.data.candidates[0].content.parts[0].text;
-    return text;
+    return res.data.candidates[0].content.parts[0].text;
   } catch(err) {
     console.error('❌ שגיאה ב-Gemini:', err.message);
     return null;
@@ -120,6 +112,21 @@ async function getOpenRaffles() {
     return res.data || [];
   } catch(err) {
     console.error('❌ שגיאה בשליפת הגרלות:', err.message);
+    return [];
+  }
+}
+
+// ── שלוף הגרלות נעולות מ-Supabase ──
+async function getTodayLockedRaffles() {
+  var today = new Date().toISOString().split('T')[0];
+  try {
+    var res = await axios.get(
+      SUPABASE_URL + '/rest/v1/raffles?raffle_date=eq.' + today + '&locked=eq.true&is_finished=eq.false&order=created_at.asc',
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } }
+    );
+    return res.data || [];
+  } catch(err) {
+    console.error('❌ שגיאה בשליפת הגרלות מ-Supabase:', err.message);
     return [];
   }
 }
@@ -148,10 +155,36 @@ async function getYesterdayResults() {
   var yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   var dateStr = yesterday.toISOString().split('T')[0];
-  var res = await axios.get(SUPABASE_URL + '/rest/v1/raffles?raffle_date=eq.' + dateStr + '&results=not.is.null&is_finished=eq.true', {
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-  });
+  var res = await axios.get(
+    SUPABASE_URL + '/rest/v1/raffles?raffle_date=eq.' + dateStr + '&results=not.is.null&is_finished=eq.true',
+    { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } }
+  );
   return res.data;
+}
+
+// ── שלח הגרלה לקהילה ──
+async function sendRaffle(raffle) {
+  try {
+    if (raffle.image_url) {
+      var sent = await axios.post(SERVER_URL + '/api/sendImage', {
+        chatId: GROUP_ID,
+        url: raffle.image_url,
+        caption: raffle.raffle_text || '',
+        raffleId: raffle.id
+      });
+    } else {
+      var sent = await axios.post(SERVER_URL + '/api/sendTextWithId', {
+        chatId: GROUP_ID,
+        content: raffle.raffle_text || '',
+        raffleId: raffle.id
+      });
+    }
+    console.log('✅ הגרלה נשלחה: ' + raffle.match_title);
+    return true;
+  } catch(err) {
+    console.error('❌ שגיאה בשליחת הגרלה:', err.message);
+    return false;
+  }
 }
 
 // ── 09:00 — תוצאות אתמול ──
@@ -225,13 +258,27 @@ cron.schedule('0 15 * * *', async function() {
   await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
-// ── 18:00 — שלח הגרלות ממתינות + הודעת ערב ──
+// ── 18:00 — שלח הגרלות מ-Supabase + הודעת ערב ──
 cron.schedule('0 18 * * *', async function() {
   console.log('⏰ 18:00');
   if (!isShabbat()) {
     try {
-      var serverModule = require('./server');
-      if (serverModule.sendAllPendingRaffles) await serverModule.sendAllPendingRaffles();
+      var raffles = await getTodayLockedRaffles();
+      if (raffles.length) {
+        console.log('📤 שולח ' + raffles.length + ' הגרלות נעולות מ-Supabase');
+        for (var i = 0; i < raffles.length; i++) {
+          await sendRaffle(raffles[i]);
+          if (i < raffles.length - 1) {
+            await new Promise(function(r) { setTimeout(r, 3 * 60 * 1000); });
+          }
+        }
+        setTimeout(async function() {
+          var afterMsg = await generateMessage('afterRaffle');
+          await sendText(afterMsg);
+        }, 2 * 60 * 1000);
+      } else {
+        console.log('אין הגרלות נעולות להיום');
+      }
     } catch(e) { console.error('שגיאה בשליחת הגרלות:', e.message); }
   }
   var msg = await generateMessage(isWeekend() ? 'weekend' : 'evening');
@@ -239,7 +286,7 @@ cron.schedule('0 18 * * *', async function() {
 }, { timezone: 'Asia/Jerusalem' });
 
 // ── 22:00 — הודעת לילה ──
-cron.schedule('47 23 * * *', async function() {
+cron.schedule('0 22 * * *', async function() {
   console.log('⏰ 22:00');
   var msg = await generateMessage(isWeekend() ? 'weekend' : 'lateEvening');
   await sendText(msg);
