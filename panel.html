@@ -121,7 +121,7 @@ textarea{line-height:1.65;min-height:110px}
       <div class="ph"><div class="ph-title">🤖 הגדרות סוכן</div><div class="ph-sub">שם הסוכן ומספר הטלפון</div></div>
       <div class="card"><div class="cb">
         <div class="grid2">
-          <div><label>שם הסוכן</label><input id="agentName" placeholder="רובי" /></div>
+          <div><label>שם הסוכן</label><input id="agentName" placeholder="אסי" /></div>
           <div><label>מספר טלפון (ללא 0)</label><input id="agentPhone" placeholder="547554270" /></div>
         </div>
         <div class="hint" style="margin-top:12px">💡 <span>{agentName}</span> ו-<span>{agentPhone}</span> יוחלפו אוטומטית בכל הפרומפטים</div>
@@ -291,7 +291,7 @@ async function loadConfig() {
 }
 
 function populateForm() {
-  setV('agentName', config.agentName || 'רובי');
+  setV('agentName', config.agentName || 'אסי');
   setV('agentPhone', config.agentPhone || '547554270');
   setV('baseRules', config.baseRules || '');
   setV('bonus_mon_wed', config.bonusRules ? config.bonusRules.monday_wednesday : '');
