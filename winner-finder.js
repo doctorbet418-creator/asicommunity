@@ -34,7 +34,7 @@ async function findWinnersWithAI(raffleText, resultsText, replies, questionCount
     `${i + 1}. שם: ${r.senderName} | טלפון: ${r.senderId} | זמן: ${new Date(r.timestamp * 1000).toLocaleTimeString('he-IL')} | ניחוש: "${r.body}"`
   ).join('\n');
 
-  const prompt = `אתה עוזר לזהות זוכים בהגרלת ספורט של רובי.
+  const prompt = `אתה עוזר לזהות זוכים בהגרלת ספורט של אסי.
 
 טקסט ההגרלה:
 ${raffleText}
@@ -112,7 +112,7 @@ async function findWinners(raffleId, messageId) {
   const result = await findWinnersWithAI(raffle.raffle_text, raffle.results, replies, raffle.question_count || 1);
   const message = buildWinnersMessage(raffle, result);
   await axios.post(`${SERVER_URL}/api/sendText`, { chatId: ADMIN_PHONE, content: message });
-  console.log('✅ הודעת זוכים נשלחה לרובי!');
+  console.log('✅ הודעת זוכים נשלחה לאסי!');
   return result;
 }
 
