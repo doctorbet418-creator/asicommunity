@@ -8,6 +8,7 @@ const SUPABASE_URL = 'https://hnkiqwgkmtpirykydkrb.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const PROMPTS_FILE = './prompts.json';
 const LOVABLE_URL = process.env.LOVABLE_URL || 'https://betongameraffle.lovable.app';
 const BOT_SECRET = process.env.BOT_WEBHOOK_SECRET || '';
@@ -75,24 +76,52 @@ async function generateMessage(type) {
   if (bonus === '30deposit') bonusInstruction = 'היום יש ' + (br.monday_wednesday || '30% הפקדה לא מקוזז') + '. הזכר פעם אחת בלבד בערב.';
   if (bonus === '100casino') bonusInstruction = 'היום יש ' + (br.tuesday_thursday || '100% קזינו ו-50% ספורט') + '. הזכר פעם אחת בלבד בערב.';
   if (bonus === 'weekend') bonusInstruction = 'סופ"ש! שווק: ' + (br.weekend || '100% קזינו ו-50% ספורט') + ' לא מקוזז!';
-  var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'אסי') + ', כותב הודעות שיווקיות לקהילת שחקנים. כתוב הודעה קצרה. סיים עם wa.me/972' + (config.agentPhone || '547554270'));
+
+  var promptTemplate = (config.prompts && config.prompts[type]) || ('אתה ' + (config.agentName || 'אסי') + ', כותב הודעות שיווקיות לקהילת שחקנים. כתוב הודעה קצרה. סיים עם wa.me/972' + (config.agentPhone || '525151129'));
   var prompt = promptTemplate
     .replace(/{agentName}/g, config.agentName || 'אסי')
     .replace(/{agentPhone}/g, config.agentPhone || '525151129')
     .replace(/{day}/g, dayName)
     .replace(/{baseRules}/g, config.baseRules || '')
     .replace(/{bonusInstruction}/g, bonusInstruction);
-  try {
-    var res = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY,
-      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 12024, temperature: 0.8 } },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 90000 }
-    );
-    return res.data.candidates[0].content.parts[0].text;
-  } catch(err) {
-    console.error('❌ שגיאה ב-Gemini:', err.message);
-    return null;
+
+  // ── נסה Gemini עם retry ועם מודלים חלופיים ──
+  var geminiModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
+  for (var m = 0; m < geminiModels.length; m++) {
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        var res = await axios.post(
+          'https://generativelanguage.googleapis.com/v1beta/models/' + geminiModels[m] + ':generateContent?key=' + GEMINI_API_KEY,
+          { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 12024, temperature: 0.8 } },
+          { headers: { 'Content-Type': 'application/json' }, timeout: 90000 }
+        );
+        console.log('✅ הודעה נוצרה עם ' + geminiModels[m] + ' (ניסיון ' + attempt + ')');
+        return res.data.candidates[0].content.parts[0].text;
+      } catch(err) {
+        console.error('❌ ' + geminiModels[m] + ' ניסיון ' + attempt + ' נכשל: ' + err.message);
+        if (attempt < 3) await new Promise(function(r) { setTimeout(r, attempt * 5000); });
+      }
+    }
+    console.log('🔄 עובר למודל הבא...');
   }
+
+  // ── Fallback: OpenAI ──
+  if (OPENAI_API_KEY) {
+    try {
+      var res2 = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        { model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], max_tokens: 12024, temperature: 0.8 },
+        { headers: { 'Authorization': 'Bearer ' + OPENAI_API_KEY, 'Content-Type': 'application/json' }, timeout: 60000 }
+      );
+      console.log('✅ הודעה נוצרה עם OpenAI (fallback)');
+      return res2.data.choices[0].message.content;
+    } catch(err2) {
+      console.error('❌ OpenAI גם נכשל:', err2.message);
+    }
+  }
+
+  console.error('❌ כל ה-AI נכשלו');
+  return null;
 }
 
 async function sendText(text) {
@@ -116,7 +145,6 @@ async function getOpenRaffles() {
   }
 }
 
-// ── שלוף הגרלות נעולות מ-Supabase ──
 async function getTodayLockedRaffles() {
   try {
     var res = await axios.get(LOVABLE_URL + '/api/public/bot/raffles?locked=true', {
@@ -161,21 +189,15 @@ async function getYesterdayResults() {
   }
 }
 
-// ── שלח הגרלה לקהילה ──
 async function sendRaffle(raffle) {
   try {
     if (raffle.image_url) {
-      var sent = await axios.post(SERVER_URL + '/api/sendImage', {
-        chatId: GROUP_ID,
-        url: raffle.image_url,
-        caption: raffle.raffle_text || '',
-        raffleId: raffle.id
+      await axios.post(SERVER_URL + '/api/sendImage', {
+        chatId: GROUP_ID, url: raffle.image_url, caption: raffle.raffle_text || '', raffleId: raffle.id
       });
     } else {
-      var sent = await axios.post(SERVER_URL + '/api/sendTextWithId', {
-        chatId: GROUP_ID,
-        content: raffle.raffle_text || '',
-        raffleId: raffle.id
+      await axios.post(SERVER_URL + '/api/sendTextWithId', {
+        chatId: GROUP_ID, content: raffle.raffle_text || '', raffleId: raffle.id
       });
     }
     console.log('✅ הגרלה נשלחה: ' + raffle.match_title);
@@ -208,14 +230,12 @@ cron.schedule('18 11 * * *', async function() {
 }, { timezone: 'Asia/Jerusalem' });
 
 // ── 12:00 — הודעת צהריים ──
-cron.schedule('0 12 * * *', async function() {
+cron.schedule('50 12 * * *', async function() {
   console.log('⏰ 12:00');
   var type = isMoatzash() ? 'motzash' : isWeekend() ? 'weekend' : 'noon';
   var msg = await generateMessage(type);
   await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
-
-
 
 // ── 15:00 — הודעת אחה"צ ──
 cron.schedule('0 15 * * *', async function() {
@@ -224,14 +244,14 @@ cron.schedule('0 15 * * *', async function() {
   await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
-// ── 18:00 — שלח הגרלות מ-Supabase + הודעת ערב ──
+// ── 18:00 — שלח הגרלות + הודעת ערב ──
 cron.schedule('0 18 * * *', async function() {
   console.log('⏰ 18:00');
   if (!isShabbat()) {
     try {
       var raffles = await getTodayLockedRaffles();
       if (raffles.length) {
-        console.log('📤 שולח ' + raffles.length + ' הגרלות נעולות מ-Supabase');
+        console.log('📤 שולח ' + raffles.length + ' הגרלות נעולות');
         for (var i = 0; i < raffles.length; i++) {
           await sendRaffle(raffles[i]);
           if (i < raffles.length - 1) {
