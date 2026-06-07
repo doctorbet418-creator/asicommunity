@@ -248,7 +248,7 @@ cron.schedule('22 12 * * *', async () => {
 }, { timezone: 'Asia/Jerusalem' });
 
 // 15:00 — הודעת אחה"צ
-cron.schedule('46 15 * * *', async () => {
+cron.schedule('09 16 * * *', async () => {
   console.log('15:00 — הודעת אחה"צ');
   const msg = await generateMessage(isWeekend() ? 'weekend' : 'afternoon');
   await sendText(msg);
