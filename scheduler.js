@@ -1,12 +1,6 @@
 const cron = require('node-cron');
 const axios = require('axios');
-const {
-  morningMessages, afterRaffleMessages,
-  weekdayNoon, weekdayAfternoon, weekdayEvening,
-  weekdayLateEvening, weekdayMidnight, lateNightMessages,
-  veryLateNightMessages, weekendMessages, motzashMessages,
-  getRandom, randomDelay, isWeekend, isMoatzash
-} = require('./messages');
+const { isWeekend, isMoatzash, getRandom } = require('./messages');
 
 const GROUP_ID = process.env.GROUP_ID;
 const SUPABASE_URL = 'https://hnkiqwgkmtpirykydkrb.supabase.co';
@@ -26,11 +20,15 @@ function isShabbat() {
   return false;
 }
 
-// ── שלח עם עיכוב אקראי ──
-async function sendWithDelay(fn, maxMinutes = 10) {
-  const delay = randomDelay(maxMinutes);
-  await new Promise(resolve => setTimeout(resolve, delay));
-  await fn();
+// ── יצירת הודעה דרך השרת (מחובר לפרומפטים ולפאנל) ──
+async function generateMessage(type) {
+  try {
+    const res = await axios.post(SERVER_URL + '/api/generateTest', { type });
+    return res.data.message || null;
+  } catch (err) {
+    console.error('שגיאה ביצירת הודעה:', err.message);
+    return null;
+  }
 }
 
 // ── שלח הודעת טקסט ──
@@ -39,13 +37,14 @@ async function sendText(text) {
     console.log('שבת — לא שולחים');
     return;
   }
+  if (!text) return;
   try {
     await axios.post(SERVER_URL + '/api/sendText', { chatId: GROUP_ID, content: text });
     console.log('הודעה נשלחה:', text.substring(0, 40) + '...');
   } catch (err) { console.error('שגיאה בשליחה:', err.message); }
 }
 
-// ── שלח הגרלה ושמור messageId ──
+// ── שלח הגרלה ──
 async function sendRaffle(raffle) {
   if (isShabbat() && !isMoatzash()) {
     console.log('שבת — לא שולחים הגרלות');
@@ -127,7 +126,6 @@ async function getYesterdayResults() {
 
 // ══════════════════════════════════════
 // ── כל 5 דקות — בדוק הגרלות שהסתיימו ──
-// שולח תוצאות לקבוצה + זוכים לאסי
 // ══════════════════════════════════════
 cron.schedule('*/5 * * * *', async () => {
   try {
@@ -137,26 +135,18 @@ cron.schedule('*/5 * * * *', async () => {
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } }
     );
     const finished = Array.isArray(res.data) ? res.data : [];
-
     for (const raffle of finished) {
       if (sentResults.has(raffle.id)) continue;
       sentResults.add(raffle.id);
       console.log('הגרלה הסתיימה:', raffle.match_title);
-
-      // 1. שלח תוצאות לקבוצה
       await sendResults(raffle);
-
-      // 2. אחרי 2 דקות — חפש זוכים ושלח לאסי
       setTimeout(async () => {
         try {
           const { findWinners } = require('./winner-finder');
           const msgRes = await axios.get(SERVER_URL + '/api/getRaffleMessageId?raffleId=' + raffle.id);
           const messageId = msgRes.data.messageId;
-          if (messageId) {
-            await findWinners(raffle.id, messageId);
-          } else {
-            console.log('לא נמצא messageId להגרלה ' + raffle.id);
-          }
+          if (messageId) await findWinners(raffle.id, messageId);
+          else console.log('לא נמצא messageId להגרלה ' + raffle.id);
         } catch (err) { console.error('שגיאה בחיפוש זוכים:', err.message); }
       }, 2 * 60 * 1000);
     }
@@ -164,7 +154,7 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 // ══════════════════════════════════════
-// ── לוח הזמנים ──
+// ── לוח הזמנים — כל ההודעות דרך הפאנל ──
 // ══════════════════════════════════════
 
 // 09:00 — תוצאות אתמול
@@ -181,62 +171,62 @@ cron.schedule('0 9 * * *', async () => {
 // 10:00 — הודעת בוקר
 cron.schedule('0 10 * * *', async () => {
   console.log('10:00 — הודעת בוקר');
-  sendWithDelay(() => sendText(getRandom(morningMessages)));
+  const msg = await generateMessage(isWeekend() ? 'weekend' : 'morning');
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 // 12:00 — הודעת צהריים
 cron.schedule('22 12 * * *', async () => {
   console.log('12:00 — הודעת צהריים');
-  if (isMoatzash()) { sendWithDelay(() => sendText(getRandom(motzashMessages))); return; }
-  const msg = isWeekend() ? getRandom(weekendMessages) : getRandom(weekdayNoon);
-  sendWithDelay(() => sendText(msg));
+  const type = isMoatzash() ? 'motzash' : isWeekend() ? 'weekend' : 'noon';
+  const msg = await generateMessage(type);
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 // 15:00 — הודעת אחה"צ
 cron.schedule('46 15 * * *', async () => {
   console.log('15:00 — הודעת אחה"צ');
-  const msg = isWeekend() ? getRandom(weekendMessages) : getRandom(weekdayAfternoon);
-  sendWithDelay(() => sendText(msg));
+  const msg = await generateMessage(isWeekend() ? 'weekend' : 'afternoon');
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 // 18:00 — הגרלה ראשונה + הודעת ערב
 cron.schedule('0 18 * * *', async () => {
   console.log('18:00 — הגרלה ראשונה + הודעת ערב');
-
   if (!isShabbat()) {
     const raffles = await getTodayRaffles();
     if (raffles.length > 0) {
       const sent = await sendRaffle(raffles[0]);
       if (sent) {
         setTimeout(async () => {
-          await sendText(getRandom(afterRaffleMessages));
+          const afterMsg = await generateMessage('afterRaffle');
+          await sendText(afterMsg);
         }, 60 * 60 * 1000);
       }
     } else {
       console.log('אין הגרלות נעולות ל-18:00');
     }
   }
-
-  const msg = isWeekend() ? getRandom(weekendMessages) : getRandom(weekdayEvening);
-  sendWithDelay(() => sendText(msg));
+  const msg = await generateMessage(isWeekend() ? 'weekend' : 'evening');
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 // 20:00 — הגרלה שנייה / מוצאי שבת
 cron.schedule('0 20 * * *', async () => {
   console.log('20:00 — הגרלה שנייה / מוצאי שבת');
-
   if (isMoatzash()) {
-    sendWithDelay(() => sendText(getRandom(motzashMessages)));
+    const msg = await generateMessage('motzash');
+    await sendText(msg);
     return;
   }
-
   if (!isShabbat()) {
     const raffles = await getTodayRaffles();
     if (raffles.length > 1) {
       const sent = await sendRaffle(raffles[1]);
       if (sent) {
         setTimeout(async () => {
-          await sendText(getRandom(afterRaffleMessages));
+          const afterMsg = await generateMessage('afterRaffle');
+          await sendText(afterMsg);
         }, 60 * 60 * 1000);
       }
     } else {
@@ -248,27 +238,29 @@ cron.schedule('0 20 * * *', async () => {
 // 22:00 — הודעת לילה
 cron.schedule('0 22 * * *', async () => {
   console.log('22:00 — הודעת לילה');
-  const msg = isWeekend() ? getRandom(weekendMessages) : getRandom(weekdayLateEvening);
-  sendWithDelay(() => sendText(msg));
+  const msg = await generateMessage(isWeekend() ? 'weekend' : 'lateEvening');
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 // 00:00 — הודעת חצות
 cron.schedule('0 0 * * *', async () => {
   console.log('00:00 — הודעת חצות');
-  const msg = isWeekend() ? getRandom(weekendMessages) : getRandom(weekdayMidnight);
-  sendWithDelay(() => sendText(msg));
+  const msg = await generateMessage('midnight');
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 // 01:00 — לילה מאוחר
 cron.schedule('0 1 * * *', async () => {
   console.log('01:00 — לילה מאוחר');
-  sendWithDelay(() => sendText(getRandom(lateNightMessages)));
+  const msg = await generateMessage('lateNight');
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 // 02:00 — שעתיים לפנות בוקר
 cron.schedule('0 2 * * *', async () => {
   console.log('02:00 — שעתיים לפנות בוקר');
-  sendWithDelay(() => sendText(getRandom(veryLateNightMessages)));
+  const msg = await generateMessage('veryLateNight');
+  await sendText(msg);
 }, { timezone: 'Asia/Jerusalem' });
 
 console.log('תזמון אוטומטי פעיל — שעון ישראל');
