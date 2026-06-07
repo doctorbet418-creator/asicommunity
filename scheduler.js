@@ -6,9 +6,26 @@ const GROUP_ID = process.env.GROUP_ID;
 const SUPABASE_URL = 'https://hnkiqwgkmtpirykydkrb.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhua2lxd2drbXRwaXJ5a3lka3JiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ5MDI0NTEsImV4cCI6MjA2MDQ3ODQ1MX0.JTxtYlyVwHrJqAmO5nwPPuPCTvLfx4LTQaTUu8F6RWo';
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const PROMPTS_FILE = './prompts.json';
+const fs = require('fs');
+
+// ── הגדרות Gemini — שנה כאן לפי הצורך ──
+const GEMINI_MAX_TOKENS = 12024;  // אפשר להגדיל עד 8192
+const GEMINI_TEMPERATURE = 0.8;
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
 
 // ── Set כדי לא לשלוח תוצאות פעמיים ──
 const sentResults = new Set();
+
+// ── טעינת פרומפטים מהפאנל ──
+function loadPrompts() {
+  try {
+    if (fs.existsSync(PROMPTS_FILE)) return JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8'));
+  } catch(e) {}
+  return {};
+}
 
 // ── האם עכשיו שבת? ──
 function isShabbat() {
@@ -20,15 +37,62 @@ function isShabbat() {
   return false;
 }
 
-// ── יצירת הודעה דרך השרת (מחובר לפרומפטים ולפאנל) ──
+// ── יצירת הודעה עם Gemini (מחובר לפרומפטים ולפאנל) ──
 async function generateMessage(type) {
-  try {
-    const res = await axios.post(SERVER_URL + '/api/generateTest', { type });
-    return res.data.message || null;
-  } catch (err) {
-    console.error('שגיאה ביצירת הודעה:', err.message);
-    return null;
+  const config = loadPrompts();
+  const dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+  const dayName = dayNames[new Date().getDay()];
+  const day = new Date().getDay();
+
+  const br = config.bonusRules || {};
+  let bonusInstruction = 'אין בונוס מיוחד היום.';
+  if (day === 1 || day === 3) bonusInstruction = 'היום יש ' + (br.monday_wednesday || '30% הפקדה לא מקוזז') + '. הזכר פעם אחת בלבד בערב.';
+  if (day === 2 || day === 4) bonusInstruction = 'היום יש ' + (br.tuesday_thursday || '100% קזינו ו-50% ספורט') + '. הזכר פעם אחת בלבד בערב.';
+  if (day === 4 || day === 5) bonusInstruction = 'סופ"ש! שווק: ' + (br.weekend || '100% קזינו ו-50% ספורט') + ' לא מקוזז!';
+
+  const promptTemplate = (config.prompts && config.prompts[type]) ||
+    ('אתה ' + (config.agentName || 'אסי') + ', כותב הודעות שיווקיות קצרות לקהילת שחקנים. כתוב הודעה של 3-4 שורות בלבד. סיים עם wa.me/972' + (config.agentPhone || '525151129'));
+
+  const prompt = promptTemplate
+    .replace(/{agentName}/g, config.agentName || 'אסי')
+    .replace(/{agentPhone}/g, config.agentPhone || '525151129')
+    .replace(/{day}/g, dayName)
+    .replace(/{baseRules}/g, config.baseRules || '')
+    .replace(/{bonusInstruction}/g, bonusInstruction);
+
+  // ── נסה Gemini ──
+  for (const model of GEMINI_MODELS) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await axios.post(
+          'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + GEMINI_API_KEY,
+          { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: GEMINI_MAX_TOKENS, temperature: GEMINI_TEMPERATURE } },
+          { headers: { 'Content-Type': 'application/json' }, timeout: 90000 }
+        );
+        console.log('הודעה נוצרה עם ' + model);
+        return res.data.candidates[0].content.parts[0].text;
+      } catch(err) {
+        console.error(model + ' ניסיון ' + attempt + ' נכשל:', err.message);
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 5000));
+      }
+    }
   }
+
+  // ── Fallback: OpenAI ──
+  if (OPENAI_API_KEY) {
+    try {
+      const res = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        { model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], max_tokens: GEMINI_MAX_TOKENS, temperature: GEMINI_TEMPERATURE },
+        { headers: { 'Authorization': 'Bearer ' + OPENAI_API_KEY, 'Content-Type': 'application/json' }, timeout: 60000 }
+      );
+      console.log('הודעה נוצרה עם OpenAI (fallback)');
+      return res.data.choices[0].message.content;
+    } catch(err) { console.error('OpenAI נכשל:', err.message); }
+  }
+
+  console.error('כל ה-AI נכשלו');
+  return null;
 }
 
 // ── שלח הודעת טקסט ──
