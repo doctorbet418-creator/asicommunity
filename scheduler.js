@@ -12,7 +12,7 @@ const PROMPTS_FILE = './prompts.json';
 const fs = require('fs');
 
 // ── הגדרות Gemini — שנה כאן לפי הצורך ──
-const GEMINI_MAX_TOKENS = 12024;  // אפשר להגדיל עד 8192
+const GEMINI_MAX_TOKENS = 8192;  // אפשר להגדיל עד 8192
 const GEMINI_TEMPERATURE = 0.8;
 const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
 
